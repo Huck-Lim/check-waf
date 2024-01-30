@@ -19,7 +19,7 @@ def get_response_info(url,headers):
     try:
         response = requests.get(url, headers=headers, verify=False ,timeout=5)
         soup = BeautifulSoup(response.content, 'html.parser')
-        title = soup.title.string.strip() if soup.title else "无标题"
+        title = soup.title.string.strip() if soup.title and soup.title.string else "无标题"
         status_code = response.status_code
         return title, status_code
     except requests.exceptions.Timeout:
@@ -54,7 +54,7 @@ def check_waf(url, payloads, headers=None):
         # elif((before_code == 200 and after_code != 200 or after_code != 403 or after_code != 0)):
         #     print(1)
         if(before_code == 200):
-            if(after_code == 403 or after_code == 0):
+            if(after_code == 403 or after_code == 0 or after_code == 1):
                 print('存在WAF')
                 result['WAF_Status'] = '存在WAF'
             elif(after_code == 200 and before_title == after_title):
@@ -64,15 +64,15 @@ def check_waf(url, payloads, headers=None):
                 print('疑似存在WAF')
                 result['WAF_Status'] = '疑似存在WAF'
         elif(before_code != 0):
-            if((after_code != before_code) or (after_code == before_code and before_title != after_title)):
+            if(after_code == 0 or after_code == 1):
+                print('存在WAF')
+                result['WAF_Status'] = '存在WAF'
+            elif((after_code != before_code) or (after_code == before_code and before_title != after_title)):
                 print('疑似存在WAF')
                 result['WAF_Status'] = '疑似存在WAF'
             elif(after_code == before_code and before_title == after_title):
                 print('不存在WAF')
                 result['WAF_Status'] = '不存在WAF'
-            elif(after_code == 0):
-                print('存在WAF')
-                result['WAF_Status'] = '存在WAF'
             else:
                 print('漏网之鱼')
                 result['WAF_Status'] = '漏网之鱼'
