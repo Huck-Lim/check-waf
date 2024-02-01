@@ -6,10 +6,18 @@ from openpyxl.styles import Border, Side, Font, Alignment
 from openpyxl.utils import get_column_letter
 from datetime import datetime
 from bs4 import BeautifulSoup
+from publicsuffixlist import PublicSuffixList
+from urllib.parse import urlsplit
 from urllib3.exceptions import InsecureRequestWarning
 
 # 禁用不安全请求的警告
 requests.packages.urllib3.disable_warnings(InsecureRequestWarning)
+def get_primary_domain(url):
+    psl = PublicSuffixList()
+    #domain = psl.privatesuffix(url)
+    netloc = urlsplit(url).netloc
+    domain = psl.privatesuffix(netloc)
+    return domain
 
 def read_urls_from_file(file_path):
     with open(file_path, 'r') as file:
@@ -35,6 +43,7 @@ def check_waf(url, payloads, headers=None):
         result = {}
         result['URL'] = url
         result['Payload'] = target_url
+        result['domain'] = get_primary_domain(url)
         # print(target_url)
         print('=======================================')
         print(url)
@@ -63,7 +72,7 @@ def check_waf(url, payloads, headers=None):
             else:
                 print('疑似存在WAF')
                 result['WAF_Status'] = '疑似存在WAF'
-        elif(before_code != 0):
+        elif(before_code != 0 and before_code != 1):
             if(after_code == 0 or after_code == 1):
                 print('存在WAF')
                 result['WAF_Status'] = '存在WAF'
@@ -117,7 +126,8 @@ try:
     url_file_path = sys.argv[1]
     file_name = get_filename_without_extension(url_file_path)
 except:
-    print('请输入txt文件名，默认读取urls.txt')
+    print('请输入txt文件名，默认读取urls.txt！')
+    print('python3 check-waf.py urls.txt')
     sys.exit()
 urls = read_urls_from_file(url_file_path)
 headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}
@@ -132,24 +142,25 @@ wb = Workbook()
 ws = wb.active
 
 # 设置第一行为"URL"、"Payload"和"WAF_Status"，并应用字体和对齐样式
-for i, title in enumerate(["URL", "before_code", "before_title", "after_code", "after_title", "WAF_Status"], start=1):
+for i, title in enumerate(["URL", "domain","before_code", "before_title", "after_code", "after_title", "WAF_Status"], start=1):
     cell = ws.cell(row=1, column=i, value=title)
     cell.font = Font(bold=True)
     cell.alignment = Alignment(horizontal='center', vertical='center')
 # 将结果保存到Excel文件中
 for i, result in enumerate(results, start=2):
     ws.cell(row=i, column=1, value=result['URL'])
-    ws.cell(row=i, column=2, value=result['before_code'])
-    ws.cell(row=i, column=3, value=result['before_title'])
-    ws.cell(row=i, column=4, value=result['after_code'])
-    ws.cell(row=i, column=5, value=result['after_title'])
+    ws.cell(row=i, column=2, value=result['domain'])
+    ws.cell(row=i, column=3, value=result['before_code'])
+    ws.cell(row=i, column=4, value=result['before_title'])
+    ws.cell(row=i, column=5, value=result['after_code'])
+    ws.cell(row=i, column=6, value=result['after_title'])
 
     # ws.cell(row=i, column=3, value=result['WAF_Status'])
     if 'WAF_Status' in result:
-        ws.cell(row=i, column=6, value=result['WAF_Status'])
+        ws.cell(row=i, column=7, value=result['WAF_Status'])
     else:
-        ws.cell(row=i, column=6, value='N/A')
-    ws.cell(row=i, column=7, value=result['Payload'])
+        ws.cell(row=i, column=7, value='N/A')
+    ws.cell(row=i, column=8, value=result['Payload'])
 
 # 设置框线
 set_border(ws)
