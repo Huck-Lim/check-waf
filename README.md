@@ -1,7 +1,7 @@
 # check-waf
 批量检查站点是否存在waf
 
-## how to use
+## 命令
 python3 check-waf.py urls.txt
 
 ## 说明
